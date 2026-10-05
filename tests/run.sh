@@ -125,7 +125,9 @@ if command -v busybox >/dev/null 2>&1; then
 		[ "$rc" -le 2 ] && ok || bad "$n --json exit $rc"
 		printf '%s' "$out" | json_ok && ok || bad "$n --json is not valid JSON"
 		out=$(PATH=$bb "$bbin" sh "$f" --no-color 2>&1)
-		case $out in *"not found"* | *"applet"* | *"nrecognized option"* | *"nvalid option"*)
+		# Shell errors look like "sh: foo: not found"; a check's own [SKIP]
+		# for a missing tool (no colon) is fine.
+		case $out in *": not found"* | *"applet not found"* | *"nrecognized option"* | *"nvalid option"*)
 			bad "$n uses a tool or option BusyBox lacks"; printf '%s\n' "$out" | sed 's/^/     | /' ;;
 		*) ok ;; esac
 	done
