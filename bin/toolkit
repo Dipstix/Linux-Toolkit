@@ -1,0 +1,74 @@
+#!/bin/sh
+#
+# toolkit - entry point for Linux-Toolkit. Runs the scripts in checks/.
+#
+#   toolkit list              show available checks
+#   toolkit <check> [opts]    run one check (e.g. toolkit platform --json)
+
+set -u
+
+# Resolve symlinks so an installed link (e.g. /usr/local/bin/toolkit)
+# still finds lib/ and checks/ next to the real file.
+_self=$0
+while [ -L "$_self" ]; do
+	_link=$(readlink "$_self") || break
+	case $_link in
+	/*) _self=$_link ;;
+	*) _self=$(dirname "$_self")/$_link ;;
+	esac
+done
+TK_ROOT=$(cd "$(dirname "$_self")/.." && pwd -P)
+export TK_ROOT
+
+TK_NAME=toolkit
+# shellcheck source=lib/common.sh
+. "$TK_ROOT/lib/common.sh"
+
+_desc() {
+	sed -n "s/^TK_DESC=[\"']\(.*\)[\"']\$/\1/p" "$1" | head -n 1
+}
+
+_list() {
+	printf 'Available checks:\n'
+	for _f in "$TK_ROOT"/checks/*.sh; do
+		[ -f "$_f" ] || continue
+		_n=${_f##*/}
+		printf '  %-14s %s\n' "${_n%.sh}" "$(_desc "$_f")"
+	done
+}
+
+_help() {
+	cat <<HELP
+Linux-Toolkit $TK_VERSION - portable diagnostics for Linux servers.
+
+Usage: toolkit <check> [options]
+       toolkit list
+       toolkit help | --help
+       toolkit version | --version
+
+Every check accepts --help, --json, --quiet, --verbose and --no-color.
+Exit status: 0 OK, 1 warning, 2 critical, 3 unknown or usage error.
+
+HELP
+	_list
+}
+
+[ $# -gt 0 ] || {
+	_help
+	exit 0
+}
+
+_cmd=$1
+shift
+case $_cmd in
+help | -h | --help) _help ;;
+version | -V | --version) printf 'linux-toolkit %s\n' "$TK_VERSION" ;;
+list | ls) _list ;;
+*[!a-z0-9_-]* | -*) tk_usage_error "unknown command: $_cmd" ;;
+*)
+	_file=$TK_ROOT/checks/$_cmd.sh
+	[ -f "$_file" ] || tk_usage_error "unknown check: $_cmd (see 'toolkit list')"
+	# shellcheck disable=SC2086 # TK_SHELL may carry flags, e.g. "bash --posix"
+	exec ${TK_SHELL:-sh} "$_file" "$@"
+	;;
+esac
