@@ -32,6 +32,8 @@ TK_COLOR=${TK_COLOR:-auto}    # auto | always | never
 # at fixture files.
 TK_PROC=${TK_PROC:-/proc}
 TK_SYS=${TK_SYS:-/sys}
+TK_ETC=${TK_ETC:-/etc}
+TK_LOGDIR=${TK_LOGDIR:-/var/log}
 
 # Result state.
 _TK_STATUS=0
@@ -138,6 +140,53 @@ tk_human_bytes() {
 		while (b >= 1024 && i < 6) { b /= 1024; i++ }
 		if (i == 1) printf "%d %s\n", b, u[i]; else printf "%.1f %s\n", b, u[i]
 	}'
+}
+
+# tk_net_awk: awk functions for the hex addresses in /proc/net files. Put
+# the output in front of an awk program:
+#   awk "$(tk_net_awk)"' { print ip4($2) }' "$TK_PROC/net/route"
+# hexval(H) is a hex number; ip4(H) an IPv4 address in host byte order (as
+# in route and tcp); ip6(H) an IPv6 address in network order (ipv6_route,
+# if_inet6); ip6w(H) one printed as four host-order words (tcp6, udp6).
+tk_net_awk() {
+	case $(uname -m 2>/dev/null) in
+	s390* | ppc | ppc64 | mips | mips64 | sparc* | m68k) _tk_le=0 ;;
+	*) _tk_le=1 ;;
+	esac
+	printf 'BEGIN { _tk_le = %s }\n' "$_tk_le"
+	cat <<'AWK'
+function hexval(h,   i, n) {
+	n = 0; h = toupper(h)
+	for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789ABCDEF", substr(h, i, 1)) - 1
+	return n
+}
+function _tk_swap(w) { return substr(w, 7, 2) substr(w, 5, 2) substr(w, 3, 2) substr(w, 1, 2) }
+function _tk_dot(h) {
+	return hexval(substr(h, 1, 2)) "." hexval(substr(h, 3, 2)) "." hexval(substr(h, 5, 2)) "." hexval(substr(h, 7, 2))
+}
+function ip4(h) { return _tk_dot(_tk_le ? _tk_swap(h) : h) }
+function ip6(h,   i, g, out, best, blen, run, rstart) {
+	h = toupper(h)
+	if (substr(h, 1, 24) == "00000000000000000000FFFF") return "::ffff:" _tk_dot(substr(h, 25, 8))
+	best = 0; blen = 0; run = 0
+	for (i = 1; i <= 8; i++) {
+		g[i] = tolower(substr(h, i * 4 - 3, 4)); sub(/^0+/, "", g[i]); if (g[i] == "") g[i] = "0"
+		if (g[i] == "0") { if (run == 0) rstart = i; run++; if (run > blen) { blen = run; best = rstart } } else run = 0
+	}
+	out = ""
+	for (i = 1; i <= 8; i++) {
+		if (blen > 1 && i == best) { out = out "::"; i += blen - 1; continue }
+		out = out ((out == "" || out ~ /:$/) ? "" : ":") g[i]
+	}
+	return out
+}
+function ip6w(h,   i, s) {
+	if (!_tk_le) return ip6(h)
+	s = ""
+	for (i = 0; i < 4; i++) s = s _tk_swap(substr(h, i * 8 + 1, 8))
+	return ip6(s)
+}
+AWK
 }
 
 # ---------------------------------------------------------------------------

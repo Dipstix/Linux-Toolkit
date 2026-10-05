@@ -103,7 +103,18 @@ Small helpers: `tk_is_uint` (validate option values), `tk_pct PART TOTAL`
 and `tk_human_bytes BYTES`.
 
 Read kernel state through `$TK_PROC` and `$TK_SYS` (default `/proc` and
-`/sys`) so tests can point a check at fixture files.
+`/sys`), and configuration and logs through `$TK_ETC` and `$TK_LOGDIR`
+(default `/etc` and `/var/log`), so tests can point a check at fixture
+files.
+
+`/proc/net` files hold addresses in hex. Prepend `tk_net_awk` to an awk
+program to get `hexval`, `ip4`, `ip6` (network byte order, as in
+`ipv6_route` and `if_inet6`) and `ip6w` (four host-order words, as in
+`tcp6`):
+
+```sh
+awk "$(tk_net_awk)"' NR > 1 { print $1, ip4($2) }' "$TK_PROC/net/route"
+```
 
 Write messages a tired admin at 3am understands: say what is wrong and,
 where you can, what to do (`Swap is 92% used; check for a memory leak with

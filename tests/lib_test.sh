@@ -46,6 +46,18 @@ eq "uint invalid" "$r" no
 eq "pct half" "$(tk_pct 1 2)" 50
 eq "pct rounds" "$(tk_pct 2 3)" 67
 eq "pct zero total" "$(tk_pct 5 0)" 0
+na() { awk "$(tk_net_awk)"" BEGIN { print $1 }"; }
+case $(uname -m) in s390* | ppc | ppc64 | mips | mips64 | sparc* | m68k) be=1 ;; *) be= ;; esac
+if [ -z "$be" ]; then
+	eq "net ip4" "$(na 'ip4("0101A8C0")')" 192.168.1.1
+	eq "net ip6 words" "$(na 'ip6w("00000000000000000000000001000000")')" ::1
+	eq "net ip6 mapped" "$(na 'ip6w("0000000000000000FFFF00000100007F")')" ::ffff:127.0.0.1
+fi
+eq "net hexval" "$(na 'hexval("0016")')" 22
+eq "net ip6 any" "$(na 'ip6("00000000000000000000000000000000")')" ::
+eq "net ip6 compress" "$(na 'ip6("fe800000000000000000000000000001")')" fe80::1
+eq "net ip6 first longest run" "$(na 'ip6("20010db8000000000001000000000001")')" 2001:db8::1:0:0:1
+eq "net ip6 no run" "$(na 'ip6("20010db8000100020003000400050006")')" 2001:db8:1:2:3:4:5:6
 eq "pct big numbers" "$(tk_pct 8589934592 17179869184)" 50
 if tk_ge 1.5 1.5 && tk_ge 2 1.5 && ! tk_ge 0.9 1; then r=yes; else r=no; fi
 eq "ge decimals" "$r" yes
