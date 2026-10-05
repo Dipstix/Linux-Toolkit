@@ -57,6 +57,12 @@ most monitoring systems or a cron job as is.
 | `disk` | Space and inodes per filesystem, read-only mounts, I/O pressure |
 | `services` | Failed services (systemd, OpenRC, SysV, runit), and `--expect sshd,cron` to require some |
 | `logs` | Kernel OOM kills, disk/filesystem/hardware errors and hung tasks; recent errors; log sizes |
+| `network` | Interfaces (link, speed, duplex, addresses, errors), routes, default gateway and whether it answers |
+| `dns` | resolv.conf and nsswitch, hostname resolution, test lookups, and whether each nameserver answers |
+| `connectivity` | Ping the gateway, TCP connections by IP and by name, `--url` fetch through any proxy |
+| `ports` | Listening TCP/UDP ports and their processes; databases, Docker API or telnet open to the network |
+| `firewall` | firewalld, ufw, nftables and iptables: is incoming traffic filtered, is IPv6 left open |
+| `logins` | Failed logins and where they come from, guessed-then-got-in, SSH root/password settings, extra root accounts |
 
 Thresholds are options, e.g. `toolkit disk --warn 80 --crit 90` or
 `toolkit memory --warn 90`; see each check's `--help`.
@@ -65,9 +71,17 @@ Thresholds are options, e.g. `toolkit disk --warn 80 --crit 90` or
 ./bin/toolkit disk --quiet           # one line per problem, then a verdict
 ./bin/toolkit services --expect sshd,nginx
 ./bin/toolkit logs --hours 6
+./bin/toolkit ports --expect 22,443
+./bin/toolkit connectivity --target db01:5432,10.0.0.1:443
+sudo ./bin/toolkit firewall
+sudo ./bin/toolkit logins --hours 48
 ```
 
-More are on the way: networking, security, and a one-shot `toolkit report`.
+`connectivity` and `dns` send traffic: by default a TCP connection to
+1.1.1.1 and example.com on port 443, and a lookup of example.com. Use
+`--target` and `--name` to test your own hosts, or `dns --offline`.
+
+A one-shot `toolkit report` is on the way.
 
 ## Layout
 
