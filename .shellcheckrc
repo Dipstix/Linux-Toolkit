@@ -1,0 +1,4 @@
+# Everything targets POSIX sh, whatever the shebang says.
+shell=sh
+external-sources=true
+source-path=SCRIPTDIR/..
