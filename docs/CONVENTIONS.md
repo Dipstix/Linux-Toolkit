@@ -82,6 +82,8 @@ Check-specific options are long options taking a separate value
 | `tk_kv LABEL VALUE` | A fact (string; empty becomes `null` in JSON) |
 | `tk_kvn LABEL NUMBER [DISPLAY]` | A numeric fact; DISPLAY is what humans see |
 | `tk_kvb LABEL CMD...` | A yes/no fact from a command's exit status |
+| `tk_kvj LABEL JSON` | Raw JSON (an array or object you built) in `data`; not printed |
+| `tk_print FORMAT ARGS...` | `printf` for the human view only (tables, lists) |
 | `tk_ok MSG` | A check that passed |
 | `tk_warn MSG` | Needs attention soon (exit status at least 1) |
 | `tk_crit MSG` | Broken or about to break (exit status 2) |
@@ -90,6 +92,18 @@ Check-specific options are long options taking a separate value
 | `tk_finish` | Last line. Prints the result and exits. |
 | `tk_die MSG` | The check itself failed. Exits 3. |
 | `tk_debug MSG` | Only shown with `--verbose`, on stderr |
+
+Lists such as processes or mounts are a `tk_print` table for humans plus
+one `tk_kvj` array of objects for JSON, built with `tk_json_str` for every
+string.
+
+Small helpers: `tk_is_uint` (validate option values), `tk_pct PART TOTAL`
+(rounded percent, safe for byte counts too big for shell arithmetic),
+`tk_ge A B` (compare decimals such as load averages), `tk_duration SECS`
+and `tk_human_bytes BYTES`.
+
+Read kernel state through `$TK_PROC` and `$TK_SYS` (default `/proc` and
+`/sys`) so tests can point a check at fixture files.
 
 Write messages a tired admin at 3am understands: say what is wrong and,
 where you can, what to do (`Swap is 92% used; check for a memory leak with
@@ -136,6 +150,15 @@ result recorded wins.
 ## Testing
 
 `sh tests/lint.sh` runs ShellCheck. `sh tests/run.sh` runs the library unit
-tests and smoke-tests every check (`--help`, `--json` validity, exit
-codes, `--no-color`, `--quiet`) under each POSIX shell installed: dash,
-bash `--posix`, BusyBox, mksh and yash.
+tests, the check scenarios, and smoke-tests every check (`--help`, `--json`
+validity, exit codes, `--no-color`, `--quiet`) under each POSIX shell
+installed: dash, bash `--posix`, BusyBox, mksh and yash. When BusyBox is
+installed it also runs everything with only BusyBox applets on `PATH`, as
+on Alpine, to catch GNU-only tool options.
+
+`tests/checks_test.sh` holds scenario tests: give a check fake kernel files
+(`TK_PROC=fixture/proc`) or fake tools (a stub `systemctl` or `df` first on
+`PATH`) and assert its exit status and messages. To force the init system
+or container detection, set `_TK_INIT_DONE=1 TK_INIT=openrc` or
+`_TK_VIRT_DONE=1 TK_CONTAINER=` in the environment. Add a scenario for
+every threshold and every init-system branch you write.

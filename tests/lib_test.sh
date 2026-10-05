@@ -38,6 +38,22 @@ eq "bytes small" "$(tk_human_bytes 512)" "512 B"
 eq "bytes kib" "$(tk_human_bytes 1536)" "1.5 KiB"
 eq "bytes gib" "$(tk_human_bytes 8589934592)" "8.0 GiB"
 
+if tk_is_uint 0 && tk_is_uint 42; then r=yes; else r=no; fi
+eq "uint valid" "$r" yes
+if tk_is_uint '' || tk_is_uint -1 || tk_is_uint 1.5 || tk_is_uint 4x; then r=yes; else r=no; fi
+eq "uint invalid" "$r" no
+
+eq "pct half" "$(tk_pct 1 2)" 50
+eq "pct rounds" "$(tk_pct 2 3)" 67
+eq "pct zero total" "$(tk_pct 5 0)" 0
+eq "pct big numbers" "$(tk_pct 8589934592 17179869184)" 50
+if tk_ge 1.5 1.5 && tk_ge 2 1.5 && ! tk_ge 0.9 1; then r=yes; else r=no; fi
+eq "ge decimals" "$r" yes
+
+eq "duration minutes" "$(tk_duration 59)" "0m"
+eq "duration hours" "$(tk_duration 3700)" "1h 1m"
+eq "duration days" "$(tk_duration 273600)" "3d 4h 0m"
+
 tk_detect_os
 eq "os id set" "$([ -n "$TK_OS_ID" ] && echo yes)" yes
 eq "os family set" "$([ -n "$TK_OS_FAMILY" ] && echo yes)" yes
@@ -58,13 +74,15 @@ out=$(
 	tk_kvn "Bad number" abc
 	tk_kv "Empty" ""
 	tk_kvb "Is true" true
+	tk_kvj "List" '[1,{"a":"b"}]'
+	tk_print 'not in json %s\n' x
 	tk_warn 'Disk "/" is 93% full'
 	tk_finish
 )
 rc=$?
 eq "json exit status" "$rc" 1
 case $out in
-*'"data":{"top":"level","disk_usage":{"mount":"/","used_pct":93,"bad_number":null,"empty":null,"is_true":true}}'*) r=yes ;;
+*'"data":{"top":"level","disk_usage":{"mount":"/","used_pct":93,"bad_number":null,"empty":null,"is_true":true,"list":[1,{"a":"b"}]}}'*) r=yes ;;
 *) r=no ;;
 esac
 eq "json data shape" "$r" yes
@@ -73,6 +91,14 @@ case $out in
 *) r=no ;;
 esac
 eq "json checks shape" "$r" yes
+
+out=$(
+	tk_start >/dev/null
+	tk_print 'row %s|' 1 2
+	tk_kvj "Hidden" '[]'
+	exit 0
+)
+eq "print human" "$out" "row 1|row 2|"
 
 out=$(
 	tk_start >/dev/null

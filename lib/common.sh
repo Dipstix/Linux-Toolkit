@@ -28,6 +28,10 @@ TK_JSON=${TK_JSON:-0}
 TK_QUIET=${TK_QUIET:-0}
 TK_VERBOSE=${TK_VERBOSE:-0}
 TK_COLOR=${TK_COLOR:-auto}    # auto | always | never
+# Where to read kernel state from. Only tests change these, to point checks
+# at fixture files.
+TK_PROC=${TK_PROC:-/proc}
+TK_SYS=${TK_SYS:-/sys}
 
 # Result state.
 _TK_STATUS=0
@@ -96,6 +100,35 @@ tk_json_str() {
 # tk_is_number TEXT: true if TEXT is a valid JSON number (e.g. 42, -1.5).
 tk_is_number() {
 	printf '%s' "$1" | grep -Eq '^-?(0|[1-9][0-9]*)(\.[0-9]+)?$'
+}
+
+# tk_is_uint TEXT: true if TEXT is a whole number >= 0 (for option values).
+tk_is_uint() {
+	case $1 in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	return 0
+}
+
+# tk_pct PART TOTAL: PART as a rounded whole percent of TOTAL (0 if TOTAL
+# is 0 or empty). Works with numbers too big for shell arithmetic.
+tk_pct() {
+	awk -v p="${1:-0}" -v t="${2:-0}" 'BEGIN { if (t + 0 > 0) printf "%d\n", p * 100 / t + 0.5; else print 0 }'
+}
+
+# tk_ge A B: true if number A >= number B. Decimals allowed (load averages).
+tk_ge() {
+	awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'
+}
+
+# tk_duration SECONDS: 273600 -> "3d 4h 0m".
+tk_duration() {
+	awk -v s="${1:-0}" 'BEGIN {
+		s = int(s); d = int(s / 86400); h = int(s % 86400 / 3600); m = int(s % 3600 / 60)
+		if (d > 0) printf "%dd %dh %dm\n", d, h, m
+		else if (h > 0) printf "%dh %dm\n", h, m
+		else printf "%dm\n", m
+	}'
 }
 
 # tk_human_bytes BYTES: 1536 -> "1.5 KiB".
@@ -311,6 +344,24 @@ tk_kvb() {
 	_tk_print_kv "$_tk_label" "$_tk_y"
 	[ "$TK_JSON" = 1 ] && _tk_json_member "\"$(tk_slug "$_tk_label")\":$_tk_b"
 	return 0
+}
+
+# tk_kvj LABEL JSON: raw JSON (an array or object you built) under LABEL in
+# the data object. Nothing is printed for humans; pair it with tk_print.
+#   tk_kvj "Processes" "[$items]"
+tk_kvj() {
+	[ "$TK_JSON" = 1 ] && _tk_json_member "\"$(tk_slug "$1")\":$2"
+	return 0
+}
+
+# tk_print FORMAT [ARGS...]: printf for the human view only (tables, lists).
+# Prints nothing with --json or --quiet.
+tk_print() {
+	if [ "$TK_JSON" = 1 ] || [ "$TK_QUIET" = 1 ]; then return 0; fi
+	_tk_fmt=$1
+	shift
+	# shellcheck disable=SC2059 # the format is the caller's
+	printf "$_tk_fmt" "$@"
 }
 
 _tk_check() {
