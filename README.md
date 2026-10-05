@@ -51,9 +51,23 @@ most monitoring systems or a cron job as is.
 | Check | What it shows |
 | --- | --- |
 | `platform` | Distro, kernel, init system, package manager, container/VM |
+| `system` | Uptime, users, processes and zombies, pending reboot, clock sync, file handles |
+| `cpu` | CPU model and count, load per CPU, user/system/iowait/steal, busiest processes |
+| `memory` | RAM and swap use, container memory limit, pressure, OOM kills, biggest processes |
+| `disk` | Space and inodes per filesystem, read-only mounts, I/O pressure |
+| `services` | Failed services (systemd, OpenRC, SysV, runit), and `--expect sshd,cron` to require some |
+| `logs` | Kernel OOM kills, disk/filesystem/hardware errors and hung tasks; recent errors; log sizes |
 
-More are on the way: system overview, CPU and memory, disks, services and
-logs, networking, security, and a one-shot `toolkit report`.
+Thresholds are options, e.g. `toolkit disk --warn 80 --crit 90` or
+`toolkit memory --warn 90`; see each check's `--help`.
+
+```sh
+./bin/toolkit disk --quiet           # one line per problem, then a verdict
+./bin/toolkit services --expect sshd,nginx
+./bin/toolkit logs --hours 6
+```
+
+More are on the way: networking, security, and a one-shot `toolkit report`.
 
 ## Layout
 
@@ -62,7 +76,8 @@ bin/toolkit          entry point: toolkit <check> [options]
 lib/common.sh        shared helpers: output, JSON, options, detection
 checks/*.sh          one script per check
 templates/check.sh   starting point for a new check
-tests/               lint.sh (ShellCheck) and run.sh (smoke tests)
+tests/               lint.sh (ShellCheck), run.sh (runs all tests),
+                     lib_test.sh, checks_test.sh (scenarios with fake inputs)
 docs/CONVENTIONS.md  how checks are written
 ```
 

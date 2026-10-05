@@ -55,6 +55,8 @@ for sh in $shells; do
 
 	# shellcheck disable=SC2086
 	if out=$($sh tests/lib_test.sh 2>&1); then ok; else bad "lib_test.sh"; printf '%s\n' "$out" | grep -v '^ok'; fi
+	# shellcheck disable=SC2086
+	if out=$(TK_SHELL=$sh $sh tests/checks_test.sh 2>&1); then ok; else bad "checks_test.sh"; printf '%s\n' "$out" | grep -v '^ok'; fi
 
 	for f in checks/*.sh templates/check.sh; do
 		n=${f##*/}
@@ -103,6 +105,34 @@ for sh in $shells; do
 	IFS=$nl
 done
 IFS=$old_ifs
+
+# BusyBox-only systems (Alpine, embedded) have BusyBox awk, sed, grep and df
+# instead of the GNU ones. Run everything with only BusyBox applets on PATH.
+if command -v busybox >/dev/null 2>&1; then
+	sh="busybox-only PATH"
+	printf '== %s\n' "$sh"
+	bb=$(mktemp -d)
+	bbin=$(command -v busybox)
+	for a in $(busybox --list); do ln -s "$bbin" "$bb/$a"; done
+	if out=$(PATH=$bb TK_SHELL="$bbin sh" "$bbin" sh tests/checks_test.sh 2>&1); then ok; else
+		bad "checks_test.sh"
+		printf '%s\n' "$out" | grep -v '^ok'
+	fi
+	for f in checks/*.sh; do
+		n=${f##*/}
+		out=$(PATH=$bb "$bbin" sh "$f" --json 2>/dev/null)
+		rc=$?
+		[ "$rc" -le 2 ] && ok || bad "$n --json exit $rc"
+		printf '%s' "$out" | json_ok && ok || bad "$n --json is not valid JSON"
+		out=$(PATH=$bb "$bbin" sh "$f" --no-color 2>&1)
+		# Shell errors look like "sh: foo: not found"; a check's own [SKIP]
+		# for a missing tool (no colon) is fine.
+		case $out in *": not found"* | *"applet not found"* | *"nrecognized option"* | *"nvalid option"*)
+			bad "$n uses a tool or option BusyBox lacks"; printf '%s\n' "$out" | sed 's/^/     | /' ;;
+		*) ok ;; esac
+	done
+	rm -rf "$bb"
+fi
 
 # Running through a symlink, as an installed copy would.
 tmp=$(mktemp -d)
