@@ -15,13 +15,54 @@ and more.
 ```sh
 git clone https://github.com/Dipstix/Linux-Toolkit.git
 cd Linux-Toolkit
-./bin/toolkit list              # what's available
-./bin/toolkit platform          # what is this machine?
-./bin/toolkit platform --json   # same, as JSON
-sudo ./bin/toolkit platform     # some checks show more as root
+sudo ./bin/toolkit
 ```
 
-Each check also runs on its own: `sh checks/platform.sh --help`.
+That checks everything and gives one line per area, with the problems
+spelled out:
+
+```
+Checking web01 (Ubuntu 24.04.1 LTS, kernel 6.8.0-45-generic, up 41d 3h 12m)
+
+  [ OK ] system
+  [ OK ] cpu
+  [WARN] memory        Memory is 91% used (warning at 85%)
+  [CRIT] disk          / is 97% full (1.2 GiB left); find what grew with: du -xh / | sort -h | tail
+                       /var has used 92% of its inodes
+  [ OK ] services
+  ...
+  [ OK ] logins
+
+Result: CRITICAL - 1 critical, 1 with warnings, out of 12 checks
+For details, run: toolkit memory, toolkit disk
+```
+
+Then look closer at any area:
+
+```sh
+./bin/toolkit disk              # everything the disk check knows
+./bin/toolkit cpu memory        # a summary of just these two
+./bin/toolkit list              # what each check looks at
+./bin/toolkit help disk         # its options, such as thresholds
+```
+
+Names can be shortened when it's clear which you mean (`toolkit mem`,
+`toolkit net`). It runs without root, but some checks see less; `sudo`
+gives the full picture. Each check also runs on its own:
+`sh checks/disk.sh --help`.
+
+`--quiet` keeps only the problems and the verdict, which suits cron:
+
+```sh
+./bin/toolkit --quiet || mail -s "$(hostname) needs a look" admin@example.com
+```
+
+`--json` gives one object for the whole run, with each check's full
+result under `results`:
+
+```sh
+./bin/toolkit --json | jq '.results.disk.checks'
+```
 
 ## Common options
 
@@ -43,7 +84,8 @@ Each check also runs on its own: `sh checks/platform.sh --help`.
 | 2 | Critical |
 | 3 | Unknown, or a usage error |
 
-These match the Nagios plugin convention, so a check can be dropped into
+The summary exits with the worst result of its checks (`3` only when
+nothing worse happened). These match the Nagios plugin convention, so a check can be dropped into
 most monitoring systems or a cron job as is.
 
 ## Checks
@@ -81,12 +123,10 @@ sudo ./bin/toolkit logins --hours 48
 1.1.1.1 and example.com on port 443, and a lookup of example.com. Use
 `--target` and `--name` to test your own hosts, or `dns --offline`.
 
-A one-shot `toolkit report` is on the way.
-
 ## Layout
 
 ```
-bin/toolkit          entry point: toolkit <check> [options]
+bin/toolkit          entry point: toolkit [check...] [options]
 lib/common.sh        shared helpers: output, JSON, options, detection
 checks/*.sh          one script per check
 templates/check.sh   starting point for a new check

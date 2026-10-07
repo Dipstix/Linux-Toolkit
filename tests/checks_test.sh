@@ -498,6 +498,56 @@ expect "logins: Dropbear failures and sources" 2 '3 +192.0.2.50' lg2
 expect "logins: bad --warn" 3 'whole numbers' lg2 --warn x
 rm -f "$tmp/bin/journalctl" "$tmp/bin/sshd"
 
+# --- toolkit summary ----------------------------------------------------------
+# A copy of the toolkit with fake checks, so every outcome is covered.
+K=$tmp/kit
+mkdir -p "$K/checks"
+cp -R "$ROOT/bin" "$ROOT/lib" "$K/"
+fake() {
+	{
+		printf 'TK_NAME=%s\nTK_DESC=%s\n' "$1" "'Fake $1'"
+		printf '. "$TK_ROOT/lib/common.sh"\n'
+		printf 'while [ $# -gt 0 ]; do tk_common_opt "$1" || tk_usage_error "bad: $1"; shift; done\n'
+		printf 'tk_start\ntk_section Thing\n%s\ntk_finish\n' "$2"
+	} >"$K/checks/$1.sh"
+}
+kit() {
+	# shellcheck disable=SC2086 # SH may be "bash --posix"
+	TK_SHELL=$SH $SH "$K/bin/toolkit" --no-color "$@"
+}
+fake system 'tk_ok fine'
+fake memory 'tk_info "Thing note"; tk_ok fine'
+fake firewall 'tk_info "Running in a container; the host firewall applies"'
+fake platform 'tk_warn "never part of the summary"'
+expect "summary: all ok" 0 'Result: OK - all 3 checks passed' kit
+expect "summary: nothing to check shows why" 0 '\[ -- \] firewall +Running in a container' kit
+expect "summary: platform is left out" 0 '^Checking ' kit
+fake memory 'tk_warn "Memory is 91% used"; tk_ok fine'
+fake disk 'tk_crit "/ is 98% full"; tk_section Inodes; tk_warn "/var inodes 92% used"'
+fake dns 'tk_die "cannot read resolv.conf"'
+expect "summary: warning row" 2 '\[WARN\] memory +Memory is 91% used' kit
+expect "summary: critical row" 2 '\[CRIT\] disk +/ is 98% full' kit
+expect "summary: further problems indented" 2 '^ +/var inodes 92% used' kit
+expect "summary: failed check" 2 '\[FAIL\] dns +could not run: cannot read resolv.conf' kit
+expect "summary: verdict" 2 'Result: CRITICAL - 1 critical, 1 with warnings, 1 could not run, out of 5 checks' kit
+expect "summary: points to details" 2 'For details, run: toolkit memory, toolkit disk, toolkit dns' kit
+expect "summary: --quiet hides ok rows" 2 '^toolkit: CRITICAL' kit --quiet
+out=$(kit --quiet 2>&1)
+case $out in *'[ OK ]'* | *Checking*) r=no ;; *) r=yes ;; esac
+expect "summary: --quiet has only problems" 0 "$r" echo yes
+expect "summary: named checks only" 1 'out of 2 checks' kit system memory
+expect "summary: JSON per check" 2 '"summary":\{"ok":2,"warn":1,"crit":1,"unknown":1\},"results":\{"system":\{' kit --json
+expect "summary: JSON for a failed check" 2 '"dns":\{"tool":"dns","version":"[^"]*","status":"unknown","error":"cannot read resolv.conf"\}' kit --json
+expect "summary: warning without critical exits 1" 1 'Result: WARNING' kit system memory
+expect "summary: could-not-run alone exits 3" 3 'Result: UNKNOWN' kit system dns
+expect "toolkit: unique prefix" 1 '^memory: WARNING - 1 warning, 1 passed' kit mem --quiet
+expect "toolkit: alias" 1 'Memory is 91% used' kit ram
+expect "toolkit: ambiguous prefix" 3 "could be: disk, dns" kit d
+expect "toolkit: unknown check" 3 "no check called 'nope'" kit nope
+expect "toolkit: unknown option" 3 'unknown option: --bogus' kit --bogus
+expect "toolkit: check options pass through" 3 'bad: --warn' kit memory --warn 90
+expect "toolkit: help for a check" 0 'Usage: toolkit memory' kit help mem
+
 [ "$fails" -eq 0 ] || {
 	printf '%d failure(s)\n' "$fails"
 	exit 1

@@ -102,6 +102,14 @@ for sh in $shells; do
 	[ $? -eq 3 ] && ok || bad "toolkit should reject path-like names"
 	# shellcheck disable=SC2086
 	TK_SHELL=$sh $sh bin/toolkit platform --json | json_ok && ok || bad "toolkit platform --json"
+	# shellcheck disable=SC2086
+	out=$(TK_SHELL=$sh $sh bin/toolkit --no-color 2>&1)
+	rc=$?
+	[ "$rc" -le 2 ] && ok || bad "toolkit (summary) exit $rc"
+	case $out in *"Result: "*) ok ;; *) bad "toolkit (summary) has no Result line" ;; esac
+	# shellcheck disable=SC2086
+	out=$(TK_SHELL=$sh $sh bin/toolkit --json 2>/dev/null)
+	printf '%s' "$out" | json_ok && ok || bad "toolkit --json is not valid JSON"
 	IFS=$nl
 done
 IFS=$old_ifs

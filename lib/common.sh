@@ -43,11 +43,11 @@ _TK_N_CRIT=0
 _TK_N_INFO=0
 _TK_N_SKIP=0
 _TK_SECTION=
-_TK_SECTION_LABEL=
 _TK_J_DATA=
 _TK_J_SEC=
 _TK_J_CHECKS=
 _TK_STARTED=0
+_TK_FIRST_NOTE=
 
 # ---------------------------------------------------------------------------
 # Small utilities
@@ -332,7 +332,6 @@ _tk_flush_section() {
 	[ -n "$_TK_SECTION" ] || return 0
 	_TK_J_DATA="${_TK_J_DATA:+$_TK_J_DATA,}\"$_TK_SECTION\":{$_TK_J_SEC}"
 	_TK_SECTION=
-	_TK_SECTION_LABEL=
 	_TK_J_SEC=
 }
 
@@ -341,7 +340,6 @@ _tk_flush_section() {
 tk_section() {
 	_tk_flush_section
 	_TK_SECTION=$(tk_slug "$1")
-	_TK_SECTION_LABEL=$1
 	if [ "$TK_JSON" != 1 ] && [ "$TK_QUIET" != 1 ]; then
 		printf '\n%s%s%s\n' "$TK_C_BOLD" "$1" "$TK_C_RESET"
 	fi
@@ -370,10 +368,21 @@ tk_kv() {
 }
 
 # tk_kvn LABEL NUMBER [DISPLAY]: a numeric fact. JSON gets the bare number
-# (null if not numeric); the human view shows DISPLAY when given.
+# (null if not numeric); the human view shows DISPLAY when given. DISPLAY
+# carries its own unit, so a unit at the end of LABEL ("bytes", "seconds",
+# "ms", "celsius") is left out of the human view: "Total: 15.7 GiB".
 #   tk_kvn "Memory total bytes" "$bytes" "$(tk_human_bytes "$bytes")"
 tk_kvn() {
-	_tk_print_kv "$1" "${3:-${2:-}}"
+	_tk_l=$1
+	if [ -n "${3:-}" ]; then
+		case $_tk_l in
+		?*' bytes') _tk_l=${_tk_l% bytes} ;;
+		?*' seconds') _tk_l=${_tk_l% seconds} ;;
+		?*' ms') _tk_l=${_tk_l% ms} ;;
+		?*' celsius') _tk_l=${_tk_l% celsius} ;;
+		esac
+	fi
+	_tk_print_kv "$_tk_l" "${3:-${2:-}}"
 	if [ "$TK_JSON" = 1 ]; then
 		if tk_is_number "${2:-}"; then
 			_tk_json_member "\"$(tk_slug "$1")\":$2"
@@ -421,8 +430,9 @@ _tk_check() {
 	elif [ "$TK_QUIET" = 1 ]; then
 		case $1 in
 		warn | crit)
-			printf '%s%s%s %s%s\n' "$3" "$2" "$TK_C_RESET" \
-				"${_TK_SECTION_LABEL:+$_TK_SECTION_LABEL: }" "$4"
+			# Messages stand on their own (see CONVENTIONS.md), so no
+			# section label: this is also what the toolkit summary shows.
+			printf '%s%s%s %s\n' "$3" "$2" "$TK_C_RESET" "$4"
 			;;
 		esac
 	else
@@ -452,12 +462,15 @@ tk_crit() {
 
 tk_info() {
 	_TK_N_INFO=$((_TK_N_INFO + 1))
+	[ -n "$_TK_FIRST_NOTE" ] || _TK_FIRST_NOTE="$*"
 	_tk_check info '[INFO]' "$TK_C_BLUE" "$*"
 }
 
 # tk_skip MSG: a check that could not run here (missing tool, not root...).
 tk_skip() {
 	_TK_N_SKIP=$((_TK_N_SKIP + 1))
+	# A skip explains an empty result better than an info line does.
+	[ "$_TK_N_SKIP" = 1 ] && _TK_FIRST_NOTE="$*"
 	_tk_check skip '[SKIP]' "$TK_C_DIM" "$*"
 }
 
@@ -489,12 +502,23 @@ tk_finish() {
 	1) _tk_word=WARNING _tk_col=$TK_C_YELLOW ;;
 	*) _tk_word=CRITICAL _tk_col=$TK_C_RED ;;
 	esac
-	_tk_counts="$_TK_N_OK ok, $_TK_N_WARN warning(s), $_TK_N_CRIT critical"
-	[ "$_TK_N_SKIP" -gt 0 ] && _tk_counts="$_tk_counts, $_TK_N_SKIP skipped"
+	# "1 critical, 2 warnings, 5 passed, 1 skipped", leaving out zeros. With
+	# nothing passed or failed, say so, and why (the first skip or info).
+	_tk_counts=
+	[ "$_TK_N_CRIT" -gt 0 ] && _tk_counts="$_TK_N_CRIT critical"
+	[ "$_TK_N_WARN" = 1 ] && _tk_counts="${_tk_counts:+$_tk_counts, }1 warning"
+	[ "$_TK_N_WARN" -gt 1 ] && _tk_counts="${_tk_counts:+$_tk_counts, }$_TK_N_WARN warnings"
+	[ "$_TK_N_OK" -gt 0 ] && _tk_counts="${_tk_counts:+$_tk_counts, }$_TK_N_OK passed"
+	if [ -z "$_tk_counts" ]; then
+		_tk_counts="nothing to check here"
+		[ "$TK_QUIET" = 1 ] && [ -n "$_TK_FIRST_NOTE" ] && _tk_counts="$_tk_counts: $_TK_FIRST_NOTE"
+	elif [ "$_TK_N_SKIP" -gt 0 ]; then
+		_tk_counts="$_tk_counts, $_TK_N_SKIP skipped"
+	fi
 	if [ "$TK_QUIET" = 1 ]; then
-		printf '%s: %s%s%s (%s)\n' "$TK_NAME" "$_tk_col" "$_tk_word" "$TK_C_RESET" "$_tk_counts"
+		printf '%s: %s%s%s - %s\n' "$TK_NAME" "$_tk_col" "$_tk_word" "$TK_C_RESET" "$_tk_counts"
 	else
-		printf '\n%sResult: %s%s (%s)\n' "$_tk_col$TK_C_BOLD" "$_tk_word" "$TK_C_RESET" "$_tk_counts"
+		printf '\n%sResult: %s%s - %s\n' "$_tk_col$TK_C_BOLD" "$_tk_word" "$TK_C_RESET" "$_tk_counts"
 	fi
 	exit "$_TK_STATUS"
 }

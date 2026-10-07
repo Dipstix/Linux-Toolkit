@@ -2,8 +2,10 @@
 #
 # toolkit - entry point for Linux-Toolkit. Runs the scripts in checks/.
 #
+#   toolkit                   check everything, list only what needs attention
+#   toolkit <check> [opts]    one check in full (e.g. toolkit disk --json)
+#   toolkit <check> <check>   a summary of just those checks
 #   toolkit list              show available checks
-#   toolkit <check> [opts]    run one check (e.g. toolkit platform --json)
 
 set -u
 
@@ -24,51 +26,330 @@ TK_NAME=toolkit
 # shellcheck source=lib/common.sh
 . "$TK_ROOT/lib/common.sh"
 
+# The order checks run and are listed in: health, then network, then
+# security. Checks not named here run after these, in name order.
+_GROUPS='Health:system cpu memory disk services logs
+Network:network dns connectivity
+Security:ports firewall logins
+Info:platform'
+# Short names people reach for. Any unique prefix works too (mem, net).
+_ALIASES='ram:memory swap:memory load:cpu space:disk fw:firewall ssh:logins
+uptime:system os:platform'
+
 _desc() {
 	sed -n "s/^TK_DESC=[\"']\(.*\)[\"']\$/\1/p" "$1" | head -n 1
 }
 
-_list() {
-	printf 'Available checks:\n'
+# All check names: grouped ones first, in group order, then the rest.
+_all_checks() {
+	printf '%s\n' "$_GROUPS" | sed 's/^[^:]*://' | tr ' ' '\n' | while read -r _n; do
+		[ -f "$TK_ROOT/checks/$_n.sh" ] && printf '%s\n' "$_n"
+	done
 	for _f in "$TK_ROOT"/checks/*.sh; do
 		[ -f "$_f" ] || continue
 		_n=${_f##*/}
-		printf '  %-14s %s\n' "${_n%.sh}" "$(_desc "$_f")"
+		_n=${_n%.sh}
+		case " $(printf '%s' "$_GROUPS" | sed 's/^[^:]*://' | tr '\n' ' ') " in
+		*" $_n "*) ;;
+		*) printf '%s\n' "$_n" ;;
+		esac
 	done
+}
+
+# _resolve WORD: print the check WORD names (exact, alias, or unique
+# prefix). Fails with a message on stderr if there is none or several.
+_resolve() {
+	case $1 in
+	'' | *[!a-z0-9_-]* | -*)
+		tk_err "unknown command: $1"
+		return 1
+		;;
+	esac
+	if [ -f "$TK_ROOT/checks/$1.sh" ]; then
+		printf '%s\n' "$1"
+		return 0
+	fi
+	for _a in $_ALIASES; do
+		if [ "${_a%%:*}" = "$1" ] && [ -f "$TK_ROOT/checks/${_a#*:}.sh" ]; then
+			printf '%s\n' "${_a#*:}"
+			return 0
+		fi
+	done
+	_m=$(_all_checks | grep "^$1")
+	case $_m in
+	'') tk_err "no check called '$1'. Run 'toolkit list' to see them all." ;;
+	*"
+"*) tk_err "'$1' could be: $(printf '%s' "$_m" | tr '\n' ' ' | sed 's/ $//; s/ /, /g'). Type a little more." ;;
+	*)
+		printf '%s\n' "$_m"
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_list() {
+	printf '%s\n' "$_GROUPS" | while IFS=: read -r _g _names; do
+		_out=
+		for _n in $_names; do
+			[ -f "$TK_ROOT/checks/$_n.sh" ] || continue
+			_out="$_out$(printf '  %-14s %s' "$_n" "$(_desc "$TK_ROOT/checks/$_n.sh")")
+"
+		done
+		[ -n "$_out" ] && printf '%s\n%s' "$_g" "$_out"
+	done
+	_other=
+	for _n in $(_all_checks); do
+		case " $(printf '%s' "$_GROUPS" | sed 's/^[^:]*://' | tr '\n' ' ') " in
+		*" $_n "*) ;;
+		*) _other="$_other$(printf '  %-14s %s' "$_n" "$(_desc "$TK_ROOT/checks/$_n.sh")")
+" ;;
+		esac
+	done
+	[ -n "$_other" ] && printf 'Other\n%s' "$_other"
+	return 0
 }
 
 _help() {
 	cat <<HELP
-Linux-Toolkit $TK_VERSION - portable diagnostics for Linux servers.
+Linux-Toolkit $TK_VERSION - quick health checks for any Linux machine.
 
-Usage: toolkit <check> [options]
-       toolkit list
-       toolkit help | --help
-       toolkit version | --version
+  toolkit                  Check everything and list what needs attention
+  toolkit disk             Full detail for one area (any check below)
+  toolkit cpu memory       Summary of just the checks you name
+  toolkit help disk        Options for one check (thresholds and more)
+  toolkit list             What each check looks at
 
-Every check accepts --help, --json, --quiet, --verbose and --no-color.
-Exit status: 0 OK, 1 warning, 2 critical, 3 unknown or usage error.
+Options (for a summary or a single check):
+  -q, --quiet       Only problems and the verdict
+  -j, --json        One JSON object, for scripts and monitoring
+      --no-color    Plain text (NO_COLOR=1 works too)
+
+Run with sudo to let every check see everything. Checks only read; they
+never change the system. Exit status: 0 all OK, 1 warning, 2 critical,
+3 a check could not run.
 
 HELP
 	_list
 }
 
-[ $# -gt 0 ] || {
-	_help
-	exit 0
+# ---------------------------------------------------------------------------
+# Summary: run several checks and show one line each.
+# ---------------------------------------------------------------------------
+
+# _row TAG COLOR NAME TEXT: one summary line, e.g. "[WARN] memory  ...".
+_row() {
+	[ "$_progress" = 1 ] && printf '\r%60s\r' ''
+	if [ -n "$4" ]; then
+		printf '  %s%s%s %-13s %s\n' "$2" "$1" "$TK_C_RESET" "$3" "$4"
+	else
+		printf '  %s%s%s %s\n' "$2" "$1" "$TK_C_RESET" "$3"
+	fi
 }
 
-_cmd=$1
-shift
-case $_cmd in
-help | -h | --help) _help ;;
-version | -V | --version) printf 'linux-toolkit %s\n' "$TK_VERSION" ;;
-list | ls) _list ;;
-*[!a-z0-9_-]* | -*) tk_usage_error "unknown command: $_cmd" ;;
-*)
-	_file=$TK_ROOT/checks/$_cmd.sh
-	[ -f "$_file" ] || tk_usage_error "unknown check: $_cmd (see 'toolkit list')"
-	# shellcheck disable=SC2086 # TK_SHELL may carry flags, e.g. "bash --posix"
-	exec ${TK_SHELL:-sh} "$_file" "$@"
+# _fail [MSG]: a bad command line (_resolve has already said why when MSG
+# is empty). Exits 3.
+_fail() {
+	if [ -n "${1:-}" ]; then
+		tk_err "$1"
+		printf "Run 'toolkit help' for usage.\n" >&2
+	fi
+	exit "$TK_EXIT_UNKNOWN"
+}
+
+_summary() {
+	_names=
+	for _a in "$@"; do
+		case $_a in
+		-h | --help) _help; exit 0 ;;
+		-V | --version) printf 'linux-toolkit %s\n' "$TK_VERSION"; exit 0 ;;
+		-*) tk_common_opt "$_a" || _fail "unknown option: $_a" ;;
+		*)
+			_c=$(_resolve "$_a") || _fail
+			_names="$_names $_c"
+			;;
+		esac
+	done
+	[ -n "$_names" ] || _names=$(_all_checks | grep -vx platform)
+	_tk_init_colors
+
+	_tmp=$(mktemp -d 2>/dev/null) || tk_die "cannot create a temporary directory"
+	trap 'rm -rf "$_tmp"' EXIT
+	trap 'exit 130' INT TERM
+
+	_total=0 _n_ok=0 _n_warn=0 _n_crit=0 _n_unknown=0 _worst=0 _details=
+	_json=
+	_progress=0
+	[ "$TK_JSON" != 1 ] && [ -t 1 ] && _progress=1
+
+	if [ "$TK_JSON" != 1 ] && [ "$TK_QUIET" != 1 ]; then
+		tk_detect_os
+		_up=$(awk '{ print int($1) }' "$TK_PROC/uptime" 2>/dev/null)
+		_host=$(uname -n 2>/dev/null)
+		_what="$TK_OS_NAME, kernel $(uname -r 2>/dev/null)${_up:+, up $(tk_duration "$_up")}"
+		printf '%sChecking %s%s %s(%s)%s\n\n' "$TK_C_BOLD" "${_host:-this machine}" "$TK_C_RESET" \
+			"$TK_C_DIM" "$_what" "$TK_C_RESET"
+	fi
+
+	for _n in $_names; do
+		_total=$((_total + 1))
+		[ "$_progress" = 1 ] &&
+			printf '  %s[ .. ]%s %-13s %schecking...%s\r' "$TK_C_DIM" "$TK_C_RESET" "$_n" "$TK_C_DIM" "$TK_C_RESET"
+		if [ "$TK_JSON" = 1 ]; then
+			# shellcheck disable=SC2086 # TK_SHELL may carry flags
+			_out=$(${TK_SHELL:-sh} "$TK_ROOT/checks/$_n.sh" --json 2>/dev/null)
+			_rc=$?
+			case $_out in
+			'{'*) ;;
+			*) _out="{\"tool\":$(tk_json_str "$_n"),\"status\":\"unknown\"}" ;;
+			esac
+			_json="${_json:+$_json,}\"$_n\":$_out"
+		else
+			# shellcheck disable=SC2086
+			_out=$(${TK_SHELL:-sh} "$TK_ROOT/checks/$_n.sh" --quiet --no-color 2>"$_tmp/err")
+			_rc=$?
+		fi
+
+		# Anything but 0-2 (a crash, a signal) means it could not run.
+		case $_rc in [012]) ;; *) _rc=3 ;; esac
+		case $_rc in
+		0) _n_ok=$((_n_ok + 1)) ;;
+		1) _n_warn=$((_n_warn + 1)) ;;
+		2) _n_crit=$((_n_crit + 1)) ;;
+		*) _n_unknown=$((_n_unknown + 1)) ;;
+		esac
+		# Worst status: critical, then warning, then could-not-run.
+		case $_worst:$_rc in
+		0:[123] | 3:[12] | 1:2) _worst=$_rc ;;
+		esac
+		[ "$_rc" = 0 ] || _details="$_details $_n"
+		[ "$TK_JSON" = 1 ] && continue
+
+		# Problem lines look like "[WARN] message"; the last line is the
+		# verdict, "name: OK - 2 passed".
+		_problems=$(printf '%s\n' "$_out" | grep -E '^\[(WARN|CRIT)\] ' | sed 's/^\[....\] //')
+		_verdict=$(printf '%s\n' "$_out" | tail -n 1)
+		_first=$(printf '%s\n' "$_problems" | head -n 1)
+		_rest=$(printf '%s\n' "$_problems" | sed 1d)
+		case $_rc in
+		0)
+			case $_verdict in
+			*"nothing to check here: "*)
+				[ "$TK_QUIET" = 1 ] || _row '[ -- ]' "$TK_C_DIM" "$_n" "$TK_C_DIM${_verdict#*nothing to check here: }$TK_C_RESET"
+				;;
+			*) [ "$TK_QUIET" = 1 ] || _row '[ OK ]' "$TK_C_GREEN" "$_n" "" ;;
+			esac
+			;;
+		1) _row '[WARN]' "$TK_C_YELLOW" "$_n" "$_first" ;;
+		2) _row '[CRIT]' "$TK_C_RED$TK_C_BOLD" "$_n" "$_first" ;;
+		*)
+			_err=$(sed -n '1s/^[^:]*: //p' "$_tmp/err" 2>/dev/null)
+			_row '[FAIL]' "$TK_C_RED" "$_n" "could not run: ${_err:-exit status $_rc}"
+			;;
+		esac
+		if [ -n "$_rest" ]; then
+			printf '%s\n' "$_rest" | while IFS= read -r _l; do
+				printf '  %-6s %-13s %s\n' '' '' "$_l"
+			done
+		fi
+	done
+
+	if [ "$TK_JSON" = 1 ]; then
+		TK_HOST=$(uname -n 2>/dev/null)
+		TK_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+		case $_worst in
+		0) _w=ok ;; 1) _w=warn ;; 2) _w=crit ;; *) _w=unknown ;;
+		esac
+		printf '{"tool":"toolkit","version":%s,"host":%s,"timestamp":%s,"status":"%s",' \
+			"$(tk_json_str "$TK_VERSION")" "$(tk_json_str "$TK_HOST")" "$(tk_json_str "$TK_TIMESTAMP")" "$_w"
+		printf '"summary":{"ok":%d,"warn":%d,"crit":%d,"unknown":%d},"results":{%s}}\n' \
+			"$_n_ok" "$_n_warn" "$_n_crit" "$_n_unknown" "$_json"
+		exit "$_worst"
+	fi
+
+	# Verdict, then where to look next.
+	_parts=
+	[ "$_n_crit" -gt 0 ] && _parts="$_n_crit critical"
+	[ "$_n_warn" -gt 0 ] && _parts="${_parts:+$_parts, }$_n_warn with warnings"
+	[ "$_n_unknown" -gt 0 ] && _parts="${_parts:+$_parts, }$_n_unknown could not run"
+	case $_worst in
+	0) _word=OK _col=$TK_C_GREEN _parts="all $_total checks passed" ;;
+	1) _word=WARNING _col=$TK_C_YELLOW ;;
+	2) _word=CRITICAL _col=$TK_C_RED ;;
+	*) _word=UNKNOWN _col=$TK_C_RED ;;
+	esac
+	[ "$_worst" = 0 ] || _parts="$_parts, out of $_total checks"
+	[ "$_progress" = 1 ] && printf '\r%60s\r' ''
+	if [ "$TK_QUIET" = 1 ]; then
+		printf 'toolkit: %s%s%s - %s\n' "$_col" "$_word" "$TK_C_RESET" "$_parts"
+	else
+		printf '\n%sResult: %s%s - %s\n' "$_col$TK_C_BOLD" "$_word" "$TK_C_RESET" "$_parts"
+		for _d in $_details; do
+			_next="${_next:+$_next, }toolkit $_d"
+		done
+		[ -n "${_next:-}" ] && printf 'For details, run: %s\n' "$_next"
+		tk_is_root || printf '%sNot running as root, so some checks saw less. Run it with sudo for the full picture.%s\n' \
+			"$TK_C_DIM" "$TK_C_RESET"
+	fi
+	exit "$_worst"
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+# Common options may come first (toolkit --json disk); set them aside.
+_lead=
+while [ $# -gt 0 ]; do
+	case $1 in
+	-h | --help | -V | --version) break ;;
+	-*) _lead="$_lead $1" ;;
+	*) break ;;
+	esac
+	shift
+done
+
+# shellcheck disable=SC2086 # options are single words
+[ $# -gt 0 ] || _summary $_lead
+
+case $1 in
+help | -h | --help)
+	if [ $# -ge 2 ]; then
+		_c=$(_resolve "$2") || _fail
+		# shellcheck disable=SC2086 # TK_SHELL may carry flags, e.g. "bash --posix"
+		exec ${TK_SHELL:-sh} "$TK_ROOT/checks/$_c.sh" --help
+	fi
+	_help
+	exit 0
+	;;
+version | -V | --version)
+	printf 'linux-toolkit %s\n' "$TK_VERSION"
+	exit 0
+	;;
+list | ls)
+	_list
+	exit 0
+	;;
+all | check | summary)
+	shift
+	# shellcheck disable=SC2086
+	_summary $_lead "$@"
 	;;
 esac
+
+# Two or more check names: a summary of those. One check, maybe with its
+# own options (toolkit disk --warn 80): that check in full.
+if [ $# -ge 2 ]; then
+	case $2 in
+	-*) ;;
+	*)
+		# shellcheck disable=SC2086
+		_summary $_lead "$@"
+		;;
+	esac
+fi
+
+_c=$(_resolve "$1") || _fail
+shift
+# shellcheck disable=SC2086 # TK_SHELL may carry flags; options are single words
+exec ${TK_SHELL:-sh} "$TK_ROOT/checks/$_c.sh" $_lead "$@"
