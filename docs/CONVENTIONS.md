@@ -122,6 +122,27 @@ toolkit memory`).
 
 Human output goes to stdout. Errors and debug lines go to stderr.
 
+## In the summary
+
+Plain `toolkit` runs every check with `--quiet` and shows one line each,
+so `[WARN]` and `[CRIT]` messages must make sense on their own, without
+the section title or the facts printed above them: `/var has used 92% of
+its inodes`, not `92% used`. Name the thing and the number in the message
+itself.
+
+A check that ends with nothing passed and nothing wrong (no firewall in a
+container, no service manager) shows as `[ -- ]` with its first `tk_skip`
+message, or its first `tk_info` message if it has no skips, so make that
+message explain why there was nothing to check.
+
+New checks join the summary automatically, after the ones grouped in
+`bin/toolkit` (`_GROUPS`); add yours to a group to place it.
+
+When a `tk_kvn` call passes a DISPLAY value, a unit at the end of the label
+(`bytes`, `seconds`, `ms`, `celsius`) is dropped from the human view, since
+DISPLAY carries the unit: `"Total bytes"` shows as `Total: 15.7 GiB` but
+stays `total_bytes` in JSON.
+
 ## JSON
 
 With `--json`, a check prints exactly one JSON object and nothing else on
